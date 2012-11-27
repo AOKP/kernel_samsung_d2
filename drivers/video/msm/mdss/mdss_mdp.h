@@ -114,6 +114,7 @@ struct mdss_mdp_ctl {
 	u32 flush_bits;
 
 	u32 play_cnt;
+	u32 underrun_cnt;
 
 	u16 width;
 	u16 height;

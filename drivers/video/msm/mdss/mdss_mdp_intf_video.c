@@ -172,11 +172,36 @@ static void mdss_mdp_video_pp_intr_done(void *arg)
 
 	ctx = (struct mdss_mdp_video_ctx *) arg;
 	if (!ctx) {
-		pr_err("invalid ctx\n");
-		return;
+		pr_err("invalid ctx for ctl=%d\n", ctl->num);
+		return -ENODEV;
 	}
 
-	pr_debug("intr mixer=%d\n", ctx->pp_num);
+	if (ctx->timegen_en) {
+		rc = mdss_mdp_ctl_intf_event(ctl, MDSS_EVENT_BLANK, NULL);
+		if (rc == -EBUSY) {
+			pr_debug("intf #%d busy don't turn off\n",
+				 ctl->intf_num);
+			return rc;
+		}
+		WARN(rc, "intf %d blank error (%d)\n", ctl->intf_num, rc);
+
+		mdp_video_write(ctx, MDSS_MDP_REG_INTF_TIMING_ENGINE_EN, 0);
+		mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_OFF, false);
+		ctx->timegen_en = false;
+
+		rc = mdss_mdp_ctl_intf_event(ctl, MDSS_EVENT_TIMEGEN_OFF, NULL);
+		WARN(rc, "intf %d timegen off error (%d)\n", ctl->intf_num, rc);
+
+		mdss_mdp_irq_disable(MDSS_MDP_IRQ_INTF_UNDER_RUN,
+			ctl->intf_num);
+	}
+
+	mdss_mdp_video_set_vsync_handler(ctl, NULL);
+
+	mdss_mdp_set_intr_callback(MDSS_MDP_IRQ_INTF_VSYNC, ctl->intf_num,
+				   NULL, NULL);
+	mdss_mdp_set_intr_callback(MDSS_MDP_IRQ_INTF_UNDER_RUN, ctl->intf_num,
+				   NULL, NULL);
 
 	complete(&ctx->pp_comp);
 }
@@ -221,6 +246,17 @@ static int mdss_mdp_video_prepare(struct mdss_mdp_ctl *ctl, void *arg)
 	return 0;
 }
 
+static void mdss_mdp_video_underrun_intr_done(void *arg)
+{
+	struct mdss_mdp_ctl *ctl = arg;
+	if (unlikely(!ctl))
+		return;
+
+	ctl->underrun_cnt++;
+	pr_warn("display underrun detected for ctl=%d count=%d\n", ctl->num,
+			ctl->underrun_cnt);
+}
+
 static int mdss_mdp_video_display(struct mdss_mdp_ctl *ctl, void *arg)
 {
 	struct mdss_mdp_video_ctx *ctx;
@@ -243,7 +279,16 @@ static int mdss_mdp_video_display(struct mdss_mdp_ctl *ctl, void *arg)
 		pr_debug("enabling timing gen for intf=%d\n", ctl->intf_num);
 
 		mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_ON, false);
-		MDSS_MDP_REG_WRITE(off + MDSS_MDP_REG_INTF_TIMING_ENGINE_EN, 1);
+
+		mdss_mdp_irq_enable(MDSS_MDP_IRQ_INTF_UNDER_RUN, ctl->intf_num);
+		mdp_video_write(ctx, MDSS_MDP_REG_INTF_TIMING_ENGINE_EN, 1);
+		wmb();
+
+		rc = wait_for_completion_interruptible_timeout(&ctx->vsync_comp,
+				VSYNC_TIMEOUT);
+		WARN(rc <= 0, "timeout (%d) enabling timegen on ctl=%d\n",
+				rc, ctl->num);
+
 		ctx->timegen_en = true;
 		wmb();
 	}
@@ -292,6 +337,13 @@ int mdss_mdp_video_start(struct mdss_mdp_ctl *ctl)
 	ctx->pp_num = mixer->num;
 	init_completion(&ctx->pp_comp);
 	init_completion(&ctx->vsync_comp);
+	spin_lock_init(&ctx->vsync_lock);
+	atomic_set(&ctx->vsync_ref, 0);
+
+	mdss_mdp_set_intr_callback(MDSS_MDP_IRQ_INTF_VSYNC, ctl->intf_num,
+				   mdss_mdp_video_vsync_intr_done, ctl);
+	mdss_mdp_set_intr_callback(MDSS_MDP_IRQ_INTF_UNDER_RUN, ctl->intf_num,
+				   mdss_mdp_video_underrun_intr_done, ctl);
 
 	itp.width = pinfo->xres + pinfo->lcdc.xres_pad;
 	itp.height = pinfo->yres + pinfo->lcdc.yres_pad;
