@@ -439,19 +439,15 @@ static void vfe32_stop(void)
 
 static void vfe32_subdev_notify(int id, int path)
 {
-	struct msm_vfe_resp *rp;
+	struct msm_vfe_resp rp;
 	unsigned long flags = 0;
 	spin_lock_irqsave(&vfe32_ctrl->sd_notify_lock, flags);
-	rp = msm_isp_sync_alloc(sizeof(struct msm_vfe_resp), GFP_ATOMIC);
-	if (!rp) {
-		CDBG("rp: cannot allocate buffer\n");
-		return;
-	}
 	CDBG("vfe32_subdev_notify : msgId = %d\n", id);
-	rp->evt_msg.type = MSM_CAMERA_MSG;
-	rp->evt_msg.msg_id = path;
-	rp->type = id;
-	v4l2_subdev_notify(&vfe32_ctrl->subdev, NOTIFY_VFE_BUF_EVT, rp);
+	memset(&rp, 0, sizeof(struct msm_vfe_resp));
+	rp.evt_msg.type   = MSM_CAMERA_MSG;
+	rp.evt_msg.msg_id = path;
+	rp.type	   = id;
+	v4l2_subdev_notify(&vfe32_ctrl->subdev, NOTIFY_VFE_BUF_EVT, &rp);
 	spin_unlock_irqrestore(&vfe32_ctrl->sd_notify_lock, flags);
 }
 
@@ -3568,8 +3564,9 @@ static void vfe32_do_tasklet(unsigned long data)
 			return;
 		}
 
-		list_del(&qcmd->list);
-		spin_unlock_irqrestore(&vfe32_ctrl->tasklet_lock, flags);
+		list_del_init(&qcmd->list);
+		spin_unlock_irqrestore(&vfe32_ctrl->tasklet_lock,
+			flags);
 
 		if (qcmd->vfeInterruptStatus0 &
 			VFE_IRQ_STATUS0_CAMIF_SOF_MASK) {
@@ -3705,8 +3702,6 @@ static void vfe32_do_tasklet(unsigned long data)
 	CDBG("=== vfe32_do_tasklet end ===\n");
 }
 
-DECLARE_TASKLET(vfe32_tasklet, vfe32_do_tasklet, 0);
-
 static irqreturn_t vfe32_parse_irq(int irq_num, void *data)
 {
 	unsigned long flags;
@@ -3746,7 +3741,7 @@ static irqreturn_t vfe32_parse_irq(int irq_num, void *data)
 
 	atomic_add(1, &irq_cnt);
 	spin_unlock_irqrestore(&vfe32_ctrl->tasklet_lock, flags);
-	tasklet_schedule(&vfe32_tasklet);
+	tasklet_schedule(&vfe32_ctrl->vfe32_tasklet);
 	return IRQ_HANDLED;
 }
 
@@ -4146,14 +4141,6 @@ int msm_vfe_subdev_init(struct v4l2_subdev *sd, void *data,
 	if (rc < 0)
 		goto vfe_clk_enable_failed;
 
-	rc = request_irq(vfe32_ctrl->vfeirq->start, vfe32_parse_irq,
-			 IRQF_TRIGGER_RISING, "vfe", 0);
-	if (rc < 0) {
-		pr_err("%s: irq request fail\n", __func__);
-		rc = -EBUSY;
-		goto request_irq_failed;
-	}
-
 	msm_camio_set_perf_lvl(S_INIT);
 	msm_camio_set_perf_lvl(S_PREVIEW);
 
@@ -4163,24 +4150,27 @@ int msm_vfe_subdev_init(struct v4l2_subdev *sd, void *data,
 	else
 		vfe32_ctrl->register_total = VFE33_REGISTER_TOTAL;
 
+	enable_irq(vfe32_ctrl->vfeirq->start);
+
 	return rc;
 
-request_irq_failed:
-	msm_cam_clk_enable(&vfe32_ctrl->pdev->dev, vfe32_clk_info,
-			vfe32_ctrl->vfe_clk, ARRAY_SIZE(vfe32_clk_info),
-			0);
 vfe_clk_enable_failed:
 	regulator_disable(vfe32_ctrl->fs_vfe);
 	regulator_put(vfe32_ctrl->fs_vfe);
 	vfe32_ctrl->fs_vfe = NULL;
 vfe_fs_failed:
 	iounmap(vfe32_ctrl->vfebase);
+	vfe32_ctrl->vfebase = NULL;
 vfe_remap_failed:
+	disable_irq(vfe32_ctrl->vfeirq->start);
 	return rc;
 }
 
 void msm_vfe_subdev_release(struct platform_device *pdev)
 {
+	CDBG("%s, free_irq\n", __func__);
+	disable_irq(vfe32_ctrl->vfeirq->start);
+	tasklet_kill(&vfe32_ctrl->vfe32_tasklet);
 	msm_cam_clk_enable(&vfe32_ctrl->pdev->dev, vfe32_clk_info,
 			   vfe32_ctrl->vfe_clk, ARRAY_SIZE(vfe32_clk_info), 0);
 	if (vfe32_ctrl->fs_vfe) {
@@ -4188,10 +4178,8 @@ void msm_vfe_subdev_release(struct platform_device *pdev)
 		regulator_put(vfe32_ctrl->fs_vfe);
 		vfe32_ctrl->fs_vfe = NULL;
 	}
-	CDBG("%s, free_irq\n", __func__);
-	free_irq(vfe32_ctrl->vfeirq->start, 0);
-	tasklet_kill(&vfe32_tasklet);
 	iounmap(vfe32_ctrl->vfebase);
+	vfe32_ctrl->vfebase = NULL;
 
 	if (atomic_read(&irq_cnt))
 		pr_warning("%s, Warning IRQ Count not ZERO\n", __func__);
@@ -4243,6 +4231,18 @@ static int __devinit vfe32_probe(struct platform_device *pdev)
 		goto vfe32_no_resource;
 	}
 
+	rc = request_irq(vfe32_ctrl->vfeirq->start, vfe32_parse_irq,
+				IRQF_TRIGGER_RISING, "vfe", 0);
+	if (rc < 0) {
+		pr_err("%s: irq request fail\n", __func__);
+		rc = -EBUSY;
+		goto vfe32_no_resource;
+	}
+
+	disable_irq(vfe32_ctrl->vfeirq->start);
+
+	tasklet_init(&vfe32_ctrl->vfe32_tasklet,
+			vfe32_do_tasklet, (unsigned long)vfe32_ctrl);
 
 	vfe32_ctrl->pdev = pdev;
 	return 0;

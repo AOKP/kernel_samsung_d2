@@ -27,6 +27,7 @@ void __init msm_map_msm9615_io(void);
 void __init msm9615_init_irq(void);
 void __init msm_rotator_update_bus_vectors(unsigned int xres,
 	unsigned int yres);
+void __init msm_rotator_set_split_iommu_domain(void);
 
 extern struct platform_device asoc_msm_pcm;
 extern struct platform_device asoc_msm_dai0;
@@ -293,7 +294,12 @@ extern struct platform_device msm8960_cpu_idle_device;
 
 extern struct platform_device msm8960_msm_gov_device;
 
+
 extern struct platform_device msm_device_csic0;
 extern struct platform_device msm_device_csic1;
 extern struct platform_device msm_device_vfe;
 extern struct platform_device msm_device_vpe;
+
+extern struct platform_device msm8960_iommu_domain_device;
+extern struct platform_device msm8930_iommu_domain_device;
+extern struct platform_device apq8064_iommu_domain_device;
