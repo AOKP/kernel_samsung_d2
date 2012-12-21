@@ -184,9 +184,12 @@ void mdp4_atv_overlay(struct msm_fb_data_type *mfd)
 	} else {
 		pipe->srcp0_addr = (uint32)(buf + buf_offset);
 	}
+	mdp_update_pm(mfd, vsync_ctrl_db[0].vsync_time);
+
 	mdp4_overlay_mdp_perf_req(pipe, mfd);
 	mdp4_overlay_mdp_perf_upd(mfd, 1);
 	mdp4_overlay_rgb_setup(pipe);
+
 	mdp4_overlay_reg_flush(pipe, 0);
 	mdp4_mixer_stage_up(pipe, 0);
 	mdp4_mixer_stage_commit(pipe->mixer_num);

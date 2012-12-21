@@ -45,12 +45,6 @@ static int dsi_video_enabled;
 
 #define MAX_CONTROLLER	1
 
-#ifdef BLT_MODE_CHANGE_ISSUE
-static struct wake_lock blt_mode_perf_up;
-static int blt_wake_lock_init = 0;
-extern int middle_of_blt_change;
-#endif
-
 static struct vsycn_ctrl {
 	struct device *dev;
 	int inited;
@@ -62,6 +56,7 @@ static struct vsycn_ctrl {
 	int wait_vsync_cnt;
 	int blt_change;
 	int blt_free;
+	int blt_ctrl;
 	int sysfs_created;
 	struct mutex update_lock;
 	struct completion ov_comp;
@@ -173,6 +168,8 @@ int mdp4_dsi_video_pipe_commit(int cndx, int wait)
 	pipe = vctrl->base_pipe;
 	mixer = pipe->mixer_num;
 
+	mdp_update_pm(vctrl->mfd, vctrl->vsync_time);
+
 	if (vp->update_cnt == 0) {
 		mutex_unlock(&vctrl->update_lock);
 		return cnt;
@@ -200,7 +197,7 @@ int mdp4_dsi_video_pipe_commit(int cndx, int wait)
 	}
 	spin_unlock_irqrestore(&vctrl->spin_lock, flags);
 
-	if (vctrl->blt_change) {
+	if(vctrl->blt_change) {
 		pipe = vctrl->base_pipe;
 		spin_lock_irqsave(&vctrl->spin_lock, flags);
 		INIT_COMPLETION(vctrl->dmap_comp);
@@ -505,9 +502,11 @@ int mdp4_dsi_video_on(struct platform_device *pdev)
 	int ret = 0;
 	int cndx = 0;
 	struct vsycn_ctrl *vctrl;
+	struct msm_panel_info *pinfo;
 
 	vctrl = &vsync_ctrl_db[cndx];
 	mfd = (struct msm_fb_data_type *)platform_get_drvdata(pdev);
+	pinfo = &mfd->panel_info;
 
 	if (!mfd)
 		return -ENODEV;
@@ -517,6 +516,7 @@ int mdp4_dsi_video_on(struct platform_device *pdev)
 
 	vctrl->mfd = mfd;
 	vctrl->dev = mfd->fbi->dev;
+	vctrl->blt_ctrl = pinfo->lcd.blt_ctrl;
 
 	/* mdp clock on */
 	mdp_clk_ctrl(1);
@@ -591,8 +591,10 @@ int mdp4_dsi_video_on(struct platform_device *pdev)
 	mdp4_overlayproc_cfg(pipe);
 
 	mdp4_overlay_reg_flush(pipe, 1);
+
 	mdp4_mixer_stage_up(pipe, 0);
 	mdp4_mixer_stage_commit(pipe->mixer_num);
+
 	/*
 	 * DSI timing setting
 	 */
@@ -671,14 +673,6 @@ int mdp4_dsi_video_on(struct platform_device *pdev)
 
 	mdp_histogram_ctrl_all(TRUE);
 
-#ifdef BLT_MODE_CHANGE_ISSUE
-	 if(!blt_wake_lock_init) 
-	 { 
-	     wake_lock_init(&blt_mode_perf_up, WAKE_LOCK_IDLE, "blt_mode_wakelock"); 
-	     blt_wake_lock_init = true; 
-	 } 
-#endif
-
 	mdp4_overlay_dsi_video_start();
 	return ret;
 }
@@ -714,11 +708,21 @@ int mdp4_dsi_video_off(struct platform_device *pdev)
 		mdp4_dsi_video_wait4ov(0);
 	}
 
+	mdp_histogram_ctrl_all(FALSE);
+
 	MDP_OUTP(MDP_BASE + DSI_VIDEO_BASE, 0);
 
 	dsi_video_enabled = 0;
 
-	mdp_histogram_ctrl_all(FALSE);
+	undx =  vctrl->update_ndx;
+	vp = &vctrl->vlist[undx];
+	if (vp->update_cnt) {
+		/*
+		 * pipe's iommu will be freed at next overlay play
+		 * and iommu_drop statistic will be increased by one
+		 */
+		vp->update_cnt = 0;     /* empty queue */
+	}
 
 	undx =  vctrl->update_ndx;
 	vp = &vctrl->vlist[undx];
@@ -980,26 +984,6 @@ void mdp4_dmap_done_dsi_video(int cndx)
 	spin_unlock(&vctrl->spin_lock);
 }
 
-
-#ifdef BLT_MODE_CHANGE_ISSUE
-void mdp4_overlay0_done_blt_mode_change_recovery(int cndx)
-{
-	struct vsycn_ctrl *vctrl;
-	struct mdp4_overlay_pipe *pipe;
-
-	vctrl = &vsync_ctrl_db[cndx];
-	pipe = vctrl->base_pipe;
-
-	spin_lock(&vctrl->spin_lock);
-	vsync_irq_disable(INTR_OVERLAY0_DONE, MDP_OVERLAY0_TERM);
-	vctrl->ov_done++;
-	complete_all(&vctrl->ov_comp);
-	spin_unlock(&vctrl->spin_lock);
-
-	return;
-}
-#endif
-
 /*
  * mdp4_overlay0_done_dsi: called from isr
  */
@@ -1041,9 +1025,6 @@ static void mdp4_dsi_video_do_blt(struct msm_fb_data_type *mfd, int enable)
 	int cndx = 0;
 	struct vsycn_ctrl *vctrl;
 	struct mdp4_overlay_pipe *pipe;
-#ifdef BLT_MODE_CHANGE_ISSUE
-	int tg_enabled;
-#endif
 	vctrl = &vsync_ctrl_db[cndx];
 	pipe = vctrl->base_pipe;
 
@@ -1053,9 +1034,6 @@ static void mdp4_dsi_video_do_blt(struct msm_fb_data_type *mfd, int enable)
 		pr_info("%s: no blt_base assigned\n", __func__);
 		return;
 	}
-#ifdef BLT_MODE_CHANGE_ISSUE
-	wake_lock(&blt_mode_perf_up);
-#endif
 	spin_lock_irqsave(&vctrl->spin_lock, flag);
 	if (enable && pipe->ov_blt_addr == 0) {
 		pipe->ov_blt_addr = mfd->ov0_wb_buf->write_addr;
@@ -1079,27 +1057,36 @@ static void mdp4_dsi_video_do_blt(struct msm_fb_data_type *mfd, int enable)
 
 	if (!vctrl->blt_change) {
 		spin_unlock_irqrestore(&vctrl->spin_lock, flag);
-#ifdef BLT_MODE_CHANGE_ISSUE
-		wake_unlock(&blt_mode_perf_up); 
-#endif
 		return;
 	}
-
 	spin_unlock_irqrestore(&vctrl->spin_lock, flag);
- #ifdef BLT_MODE_CHANGE_ISSUE
-	tg_enabled = inpdw(MDP_BASE + DSI_VIDEO_BASE) & 0x01;
-	if(middle_of_blt_change != 3)
-		middle_of_blt_change = TRUE; 
-		if (tg_enabled) {
-			mdp4_dsi_video_wait4dmap_done(0);
-			if (pipe->ov_blt_addr)
-				mdp4_dsi_video_wait4ov(0);
-			vctrl->blt_change = 0;
-		}
+
+	if (vctrl->blt_ctrl == OVERLAY_BLT_SWITCH_TG_OFF) {
+		int tg_enabled;
+		long long  vtime;
+
+		pr_info("%s: blt enabled by switching TG off\n", __func__);
 		vctrl->blt_change = 0;
-		middle_of_blt_change = FALSE;
-		wake_unlock(&blt_mode_perf_up); 
-#endif
+		tg_enabled = inpdw(MDP_BASE + DSI_VIDEO_BASE) & 0x01;
+		if (tg_enabled) {
+			mdp4_dsi_video_wait4vsync(0, &vtime);
+			MDP_OUTP(MDP_BASE + DSI_VIDEO_BASE, 0);
+			mdp4_dsi_video_wait4dmap_done(0);
+		}
+		mdp4_overlayproc_cfg(pipe);
+		mdp4_overlay_dmap_xy(pipe);
+		if (tg_enabled) {
+			/*
+			 * need wait for more than 1 ms to
+			 * make sure lanes' fifo is empty and
+			 * lanes in stop state befroe reset
+			 * controller
+			 */
+			usleep(2000);
+			mipi_dsi_sw_reset();
+			MDP_OUTP(MDP_BASE + DSI_VIDEO_BASE, 1);
+		}
+	}
 }
 
 void mdp4_dsi_video_overlay_blt(struct msm_fb_data_type *mfd,
@@ -1124,7 +1111,7 @@ void mdp4_dsi_video_overlay(struct msm_fb_data_type *mfd)
 	uint8 *buf;
 	unsigned int buf_offset;
 	int bpp;
-	int cnt, cndx = 0;
+	int cndx = 0;
 	struct vsycn_ctrl *vctrl;
 	struct mdp4_overlay_pipe *pipe;
 
@@ -1155,16 +1142,13 @@ void mdp4_dsi_video_overlay(struct msm_fb_data_type *mfd)
 
 	mdp4_overlay_mdp_perf_upd(mfd, 1);
 
-	cnt = mdp4_dsi_video_pipe_commit(0, 0); 
+	mdp4_dsi_video_pipe_commit(0, 0); 
 
-	if (cnt) { 
-		if (pipe->ov_blt_addr)
-			mdp4_dsi_video_wait4ov(0);
-		else
-			mdp4_dsi_video_wait4dmap(0);
-	}
+	if (pipe->ov_blt_addr)
+		mdp4_dsi_video_wait4ov(0);
+	else
+		mdp4_dsi_video_wait4dmap(0);
 
 	mdp4_overlay_mdp_perf_upd(mfd, 0);
 	mutex_unlock(&mfd->dma->ov_mutex);
 }
-

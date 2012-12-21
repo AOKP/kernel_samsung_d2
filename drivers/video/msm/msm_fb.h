@@ -37,7 +37,6 @@
 #include <linux/fb.h>
 #include <linux/list.h>
 #include <linux/types.h>
-
 #include <linux/msm_mdp.h>
 #ifdef CONFIG_HAS_EARLYSUSPEND
 #include <linux/earlysuspend.h>
@@ -207,11 +206,12 @@ struct msm_fb_data_type {
 	void *msm_fb_backup;
 	boolean panel_driver_on;
 	int vsync_sysfs_created;
+	void *cpu_pm_hdl;
 };
+
 struct msm_fb_backup_type {
 	struct fb_info info;
-	struct fb_var_screeninfo var;
-	struct msm_fb_data_type mfd;
+	struct mdp_display_commit disp_commit;
 };
 
 struct dentry *msm_fb_get_debugfs_root(void);
@@ -237,8 +237,8 @@ int msm_fb_signal_timeline(struct msm_fb_data_type *mfd);
 void msm_fb_config_backlight(struct msm_fb_data_type *mfd);
 #endif
 extern int poweroff_charging;
-void fill_black_screen(void);
-void unfill_black_screen(void);
+
+void fill_black_screen(bool on, uint8 pipe_num, uint8 mixer_num);
 int msm_fb_check_frame_rate(struct msm_fb_data_type *mfd,
 				struct fb_info *info);
 
