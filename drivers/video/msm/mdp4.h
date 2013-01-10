@@ -29,8 +29,14 @@ extern spinlock_t dsi_clk_lock;
 extern u32 mdp_max_clk;
 
 extern u64 mdp_max_bw;
-#define MDP4_BW_AB_FACTOR (115)	/* 1.15 */
-#define MDP4_BW_IB_FACTOR (125)	/* 1.25 */
+#ifdef CONFIG_FB_MSM_MIPI_SAMSUNG_OLED_VIDEO_HD_PT
+#define MDP4_BW_AB_FACTOR (345)	/* 3.45*/
+#define MDP4_BW_IB_FACTOR (375)	/* 3.75 */
+#else
+#define MDP4_BW_AB_FACTOR (115) /* 1.15 */
+#define MDP4_BW_IB_FACTOR (125) /* 1.25 */
+#endif
+
 #define MDP_BUS_SCALE_AB_STEP (0x4000000)
 #define MDP_BUS_SCALE_INIT (0x10000000)
 
@@ -1056,6 +1062,9 @@ int mdp4_calc_blt_mdp_bw(struct msm_fb_data_type *mfd,
 int mdp4_overlay_mdp_perf_req(struct msm_fb_data_type *mfd,
 			      struct mdp4_overlay_pipe *plist);
 void mdp4_overlay_mdp_perf_upd(struct msm_fb_data_type *mfd, int flag);
+int mdp4_update_base_blend(struct msm_fb_data_type *mfd,
+				struct mdp_blend_cfg *mdp_blend_cfg);
+u32 mdp4_get_mixer_num(u32 panel_type);
 
 #ifndef CONFIG_FB_MSM_WRITEBACK_MSM_PANEL
 static inline void mdp4_wfd_pipe_queue(int cndx, struct mdp4_overlay_pipe *pipe)
