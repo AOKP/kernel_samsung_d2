@@ -1,6 +1,6 @@
 #
 # Automatically generated make config: don't edit
-# Linux/arm 3.0.58 Kernel Configuration
+# Linux/arm 3.0.59 Kernel Configuration
 #
 CONFIG_ARM=y
 CONFIG_SYS_SUPPORTS_APM_EMULATION=y
@@ -621,10 +621,6 @@ CONFIG_ZBOOT_ROM_TEXT=0
 CONFIG_ZBOOT_ROM_BSS=0
 CONFIG_CMDLINE=""
 # CONFIG_XIP_KERNEL is not set
-CONFIG_KEXEC=y
-CONFIG_ATAGS_PROC=y
-CONFIG_KEXEC_HARDBOOT=y
-CONFIG_KEXEC_HB_PAGE_ADDR=0xfffff000
 # CONFIG_CRASH_DUMP is not set
 # CONFIG_AUTO_ZRELADDR is not set
 
