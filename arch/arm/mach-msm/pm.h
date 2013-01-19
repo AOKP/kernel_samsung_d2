@@ -28,13 +28,14 @@ extern void msm_secondary_startup(void);
 #endif
 
 enum msm_pm_sleep_mode {
-	MSM_PM_SLEEP_MODE_POWER_COLLAPSE_SUSPEND,
-	MSM_PM_SLEEP_MODE_POWER_COLLAPSE,
-	MSM_PM_SLEEP_MODE_APPS_SLEEP,
-	MSM_PM_SLEEP_MODE_RAMP_DOWN_AND_WAIT_FOR_INTERRUPT,
-	MSM_PM_SLEEP_MODE_WAIT_FOR_INTERRUPT,
-	MSM_PM_SLEEP_MODE_POWER_COLLAPSE_NO_XO_SHUTDOWN,
-	MSM_PM_SLEEP_MODE_POWER_COLLAPSE_STANDALONE,
+        MSM_PM_SLEEP_MODE_WAIT_FOR_INTERRUPT = 0,
+        MSM_PM_SLEEP_MODE_RAMP_DOWN_AND_WAIT_FOR_INTERRUPT = 1,
+        MSM_PM_SLEEP_MODE_POWER_COLLAPSE_STANDALONE = 2,
+        MSM_PM_SLEEP_MODE_POWER_COLLAPSE = 3,
+        MSM_PM_SLEEP_MODE_APPS_SLEEP = 4,
+        MSM_PM_SLEEP_MODE_RETENTION = MSM_PM_SLEEP_MODE_APPS_SLEEP,
+        MSM_PM_SLEEP_MODE_POWER_COLLAPSE_SUSPEND = 5,
+        MSM_PM_SLEEP_MODE_POWER_COLLAPSE_NO_XO_SHUTDOWN = 6,
 	MSM_PM_SLEEP_MODE_NR
 };
 
@@ -68,6 +69,7 @@ void msm_pm_set_platform_data(struct msm_pm_platform_data *data, int count);
 int msm_pm_idle_prepare(struct cpuidle_device *dev);
 int msm_pm_idle_enter(enum msm_pm_sleep_mode sleep_mode);
 void msm_pm_cpu_enter_lowpower(unsigned int cpu);
+void __init msm_pm_set_tz_retention_flag(unsigned int flag);
 
 void __init msm_pm_init_sleep_status_data(
 		struct msm_pm_sleep_status_data *sleep_data);

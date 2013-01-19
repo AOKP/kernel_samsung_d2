@@ -24,7 +24,7 @@
  * software in any way with any other Broadcom software provided under a license
  * other than the GPL, without Broadcom's express prior written consent.
  *
- * $Id: dhd.h 356711 2012-09-13 15:58:32Z $
+ * $Id: dhd.h 357954 2012-09-20 18:22:31Z $
  */
 
 /****************
@@ -57,8 +57,6 @@ int setScheduler(struct task_struct *p, int policy, struct sched_param *param);
 
 #include <wlioctl.h>
 #include <wlfc_proto.h>
-
-#include <dhd_sec_feature.h>
 
 #if defined(CUSTOMER_HW4_RELEASE)
 /* Customer requirement */
@@ -688,8 +686,14 @@ extern uint dhd_force_tx_queueing;
 #define CUSTOM_GLOM_SETTING	DEFAULT_GLOM_VALUE
 #endif
 
+/* hooks for custom glom setting option via Makefile */
+#define DEFAULT_GLOM_VALUE 	-1
+#ifndef CUSTOM_GLOM_SETTING
+#define CUSTOM_GLOM_SETTING 	DEFAULT_GLOM_VALUE
+#endif
+
 /* hooks for custom Roaming Trigger  setting via Makefile */
-#define DEFAULT_ROAM_TRIGGER_VALUE -75 /* dBm default roam trigger all band */
+#define DEFAULT_ROAM_TRIGGER_VALUE -65 /* dBm default roam trigger all band */
 #define DEFAULT_ROAM_TRIGGER_SETTING 	-1
 #ifndef CUSTOM_ROAM_TRIGGER_SETTING
 #define CUSTOM_ROAM_TRIGGER_SETTING 	DEFAULT_ROAM_TRIGGER_VALUE
