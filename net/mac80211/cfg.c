@@ -452,41 +452,45 @@ static int ieee80211_get_station(struct wiphy *wiphy, struct net_device *dev,
 	return ret;
 }
 
-/*
- * This handles both adding a beacon and setting new beacon info
- */
-static int ieee80211_config_beacon(struct ieee80211_sub_if_data *sdata,
-				   struct beacon_parameters *params)
+static int ieee80211_set_probe_resp(struct ieee80211_sub_if_data *sdata,
+				    const u8 *resp, size_t resp_len)
+{
+	struct sk_buff *new, *old;
+
+	if (!resp || !resp_len)
+		return 1;
+
+	old = sdata->u.ap.probe_resp;
+
+	new = dev_alloc_skb(resp_len);
+	if (!new)
+		return -ENOMEM;
+
+	memcpy(skb_put(new, resp_len), resp, resp_len);
+
+	rcu_assign_pointer(sdata->u.ap.probe_resp, new);
+	if (old) {
+		/* TODO: use call_rcu() */
+		synchronize_rcu();
+		dev_kfree_skb(old);
+	}
+
+	return 0;
+}
+
+static int ieee80211_assign_beacon(struct ieee80211_sub_if_data *sdata,
+				   struct cfg80211_beacon_data *params)
 {
 	struct beacon_data *new, *old;
 	int new_head_len, new_tail_len;
-	int size;
-	int err = -EINVAL;
+	int size, err;
+	u32 changed = BSS_CHANGED_BEACON;
 
 	old = rtnl_dereference(sdata->u.ap.beacon);
 
-	/* head must not be zero-length */
-	if (params->head && !params->head_len)
-		return -EINVAL;
-
-	/*
-	 * This is a kludge. beacon interval should really be part
-	 * of the beacon information.
-	 */
-	if (params->interval &&
-	    (sdata->vif.bss_conf.beacon_int != params->interval)) {
-		sdata->vif.bss_conf.beacon_int = params->interval;
-		ieee80211_bss_info_change_notify(sdata,
-						 BSS_CHANGED_BEACON_INT);
-	}
-
 	/* Need to have a beacon head if we don't have one yet */
 	if (!params->head && !old)
-		return err;
-
-	/* sorry, no way to start beaconing without dtim period */
-	if (!params->dtim_period && !old)
-		return err;
+		return -EINVAL;
 
 	/* new or old head? */
 	if (params->head)
@@ -508,12 +512,6 @@ static int ieee80211_config_beacon(struct ieee80211_sub_if_data *sdata,
 		return -ENOMEM;
 
 	/* start filling the new info now */
-
-	/* new or old dtim period? */
-	if (params->dtim_period)
-		new->dtim_period = params->dtim_period;
-	else
-		new->dtim_period = old->dtim_period;
 
 	/*
 	 * pointers go into the block we allocated,
@@ -537,36 +535,91 @@ static int ieee80211_config_beacon(struct ieee80211_sub_if_data *sdata,
 		if (old)
 			memcpy(new->tail, old->tail, new_tail_len);
 
-	sdata->vif.bss_conf.dtim_period = new->dtim_period;
+	err = ieee80211_set_probe_resp(sdata, params->probe_resp,
+				       params->probe_resp_len);
+	if (err < 0)
+		return err;
+	if (err == 0)
+		changed |= BSS_CHANGED_AP_PROBE_RESP;
 
 	rcu_assign_pointer(sdata->u.ap.beacon, new);
 
-	synchronize_rcu();
+	if (old)
+		kfree_rcu(old, rcu_head);
 
-	kfree(old);
-
-	ieee80211_bss_info_change_notify(sdata, BSS_CHANGED_BEACON_ENABLED |
-						BSS_CHANGED_BEACON);
-	return 0;
+	return changed;
 }
 
-static int ieee80211_add_beacon(struct wiphy *wiphy, struct net_device *dev,
-				struct beacon_parameters *params)
+static int ieee80211_start_ap(struct wiphy *wiphy, struct net_device *dev,
+			      struct cfg80211_ap_settings *params)
 {
-	struct ieee80211_sub_if_data *sdata;
+	struct ieee80211_sub_if_data *sdata = IEEE80211_DEV_TO_SUB_IF(dev);
 	struct beacon_data *old;
-
-	sdata = IEEE80211_DEV_TO_SUB_IF(dev);
+	struct ieee80211_sub_if_data *vlan;
+	u32 changed = BSS_CHANGED_BEACON_INT |
+		      BSS_CHANGED_BEACON_ENABLED |
+		      BSS_CHANGED_BEACON |
+		      BSS_CHANGED_SSID;
+	int err;
 
 	old = rtnl_dereference(sdata->u.ap.beacon);
 	if (old)
 		return -EALREADY;
 
-	return ieee80211_config_beacon(sdata, params);
+	/*
+	 * Apply control port protocol, this allows us to
+	 * not encrypt dynamic WEP control frames.
+	 */
+	sdata->control_port_protocol = params->crypto.control_port_ethertype;
+	sdata->control_port_no_encrypt = params->crypto.control_port_no_encrypt;
+	list_for_each_entry(vlan, &sdata->u.ap.vlans, u.vlan.list) {
+		vlan->control_port_protocol =
+			params->crypto.control_port_ethertype;
+		vlan->control_port_no_encrypt =
+			params->crypto.control_port_no_encrypt;
+	}
+
+	sdata->vif.bss_conf.beacon_int = params->beacon_interval;
+	sdata->vif.bss_conf.dtim_period = params->dtim_period;
+
+	sdata->vif.bss_conf.ssid_len = params->ssid_len;
+	if (params->ssid_len)
+		memcpy(sdata->vif.bss_conf.ssid, params->ssid,
+		       params->ssid_len);
+	sdata->vif.bss_conf.hidden_ssid =
+		(params->hidden_ssid != NL80211_HIDDEN_SSID_NOT_IN_USE);
+
+	err = ieee80211_assign_beacon(sdata, &params->beacon);
+	if (err < 0)
+		return err;
+	changed |= err;
+
+	ieee80211_bss_info_change_notify(sdata, changed);
+
+	return 0;
 }
 
-static int ieee80211_set_beacon(struct wiphy *wiphy, struct net_device *dev,
-				struct beacon_parameters *params)
+static int ieee80211_change_beacon(struct wiphy *wiphy, struct net_device *dev,
+				   struct cfg80211_beacon_data *params)
+{
+	struct ieee80211_sub_if_data *sdata;
+	struct beacon_data *old;
+	int err;
+
+	sdata = IEEE80211_DEV_TO_SUB_IF(dev);
+
+	old = rtnl_dereference(sdata->u.ap.beacon);
+	if (!old)
+		return -ENOENT;
+
+	err = ieee80211_assign_beacon(sdata, params);
+	if (err < 0)
+		return err;
+	ieee80211_bss_info_change_notify(sdata, err);
+	return 0;
+}
+
+static int ieee80211_stop_ap(struct wiphy *wiphy, struct net_device *dev)
 {
 	struct ieee80211_sub_if_data *sdata;
 	struct beacon_data *old;
@@ -577,25 +630,12 @@ static int ieee80211_set_beacon(struct wiphy *wiphy, struct net_device *dev,
 	if (!old)
 		return -ENOENT;
 
-	return ieee80211_config_beacon(sdata, params);
-}
+	RCU_INIT_POINTER(sdata->u.ap.beacon, NULL);
 
-static int ieee80211_del_beacon(struct wiphy *wiphy, struct net_device *dev)
-{
-	struct ieee80211_sub_if_data *sdata;
-	struct beacon_data *old;
-
-	sdata = IEEE80211_DEV_TO_SUB_IF(dev);
-
-	old = rtnl_dereference(sdata->u.ap.beacon);
-	if (!old)
-		return -ENOENT;
-
-	rcu_assign_pointer(sdata->u.ap.beacon, NULL);
-	synchronize_rcu();
-	kfree(old);
+	kfree_rcu(old, rcu_head);
 
 	ieee80211_bss_info_change_notify(sdata, BSS_CHANGED_BEACON_ENABLED);
+
 	return 0;
 }
 
@@ -1810,7 +1850,8 @@ static int ieee80211_mgmt_tx(struct wiphy *wiphy, struct net_device *dev,
 			     struct ieee80211_channel *chan, bool offchan,
 			     enum nl80211_channel_type channel_type,
 			     bool channel_type_valid, unsigned int wait,
-			     const u8 *buf, size_t len, u64 *cookie)
+			     const u8 *buf, size_t len, bool no_cck,
+			     bool dont_wait_for_ack, u64 *cookie)
 {
 	struct ieee80211_sub_if_data *sdata = IEEE80211_DEV_TO_SUB_IF(dev);
 	struct ieee80211_local *local = sdata->local;
@@ -1818,9 +1859,14 @@ static int ieee80211_mgmt_tx(struct wiphy *wiphy, struct net_device *dev,
 	struct sta_info *sta;
 	struct ieee80211_work *wk;
 	const struct ieee80211_mgmt *mgmt = (void *)buf;
-	u32 flags = IEEE80211_TX_INTFL_NL80211_FRAME_TX |
-		    IEEE80211_TX_CTL_REQ_TX_STATUS;
+	u32 flags;
 	bool is_offchan = false;
+
+	if (dont_wait_for_ack)
+		flags = IEEE80211_TX_CTL_NO_ACK;
+	else
+		flags = IEEE80211_TX_INTFL_NL80211_FRAME_TX |
+			IEEE80211_TX_CTL_REQ_TX_STATUS;
 
 	/* Check that we are on the requested channel for transmission */
 	if (chan != local->tmp_channel &&
@@ -1836,6 +1882,9 @@ static int ieee80211_mgmt_tx(struct wiphy *wiphy, struct net_device *dev,
 		is_offchan = false;
 		flags |= IEEE80211_TX_CTL_TX_OFFCHAN;
 	}
+
+	if (no_cck)
+		flags |= IEEE80211_TX_CTL_NO_CCK_RATE;
 
 	if (is_offchan && !offchan)
 		return -EBUSY;
@@ -2094,9 +2143,9 @@ struct cfg80211_ops mac80211_config_ops = {
 	.get_key = ieee80211_get_key,
 	.set_default_key = ieee80211_config_default_key,
 	.set_default_mgmt_key = ieee80211_config_default_mgmt_key,
-	.add_beacon = ieee80211_add_beacon,
-	.set_beacon = ieee80211_set_beacon,
-	.del_beacon = ieee80211_del_beacon,
+	.start_ap = ieee80211_start_ap,
+	.change_beacon = ieee80211_change_beacon,
+	.stop_ap = ieee80211_stop_ap,
 	.add_station = ieee80211_add_station,
 	.del_station = ieee80211_del_station,
 	.change_station = ieee80211_change_station,
