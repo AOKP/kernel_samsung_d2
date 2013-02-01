@@ -613,10 +613,10 @@ int elv_reinsert_request(struct request_queue *q, struct request *rq)
 {
 	int res;
 
-	if (!q->elevator->type->ops.elevator_reinsert_req_fn)
+	if (!q->elevator->ops->elevator_reinsert_req_fn)
 		return -EPERM;
 
-	res = q->elevator->type->ops.elevator_reinsert_req_fn(q, rq);
+	res = q->elevator->ops->elevator_reinsert_req_fn(q, rq);
 	if (!res) {
 		/*
 		 * it already went through dequeue, we need to decrement the
@@ -835,6 +835,7 @@ void elv_completed_request(struct request_queue *q, struct request *rq)
 		q->dispatched_urgent = false;
 		blk_clear_rq_urgent(rq);
 	}
+
 	/*
 	 * request is released from the driver, io must be done
 	 */
