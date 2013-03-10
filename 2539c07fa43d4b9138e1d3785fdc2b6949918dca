@@ -1,0 +1,9 @@
+Change-Id: I2539c07fa43d4b9138e1d3785fdc2b6949918dca
+Code-Review+2: Brandon McAnsh <bmc08gt.teamb00sted@gmail.com>
+Verified+1: Brandon McAnsh <bmc08gt.teamb00sted@gmail.com>
+Code-Review+1: Tom Marshall <tdm.code@gmail.com>
+Submitted-by: Brandon McAnsh <bmc08gt.teamb00sted@gmail.com>
+Submitted-at: Sun, 10 Mar 2013 05:39:14 +0000
+Reviewed-on: http://gerrit.sudoservers.com/7241
+Project: AOKP/kernel_samsung_d2
+Branch: refs/heads/jb-mr1
