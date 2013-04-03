@@ -220,13 +220,13 @@ int msm_ipc_router_bind(struct socket *sock, struct sockaddr *uaddr,
 
 	if (!sk)
 		return -EINVAL;
-#if 0
+
 	if (!check_permissions()) {
 		pr_err("%s: %s Do not have permissions\n",
 			__func__, current->comm);
 		return -EPERM;
 	}
-#endif
+
 	if (!uaddr_len) {
 		pr_err("%s: Invalid address length\n", __func__);
 		return -EINVAL;
