@@ -44,6 +44,12 @@
 #define PRI_SRC_SEL_HFPLL	1
 #define PRI_SRC_SEL_HFPLL_DIV2	2
 
+#ifdef CONFIG_LOW_CPUCLOCKS
+#define FREQ_TABLE_SIZE		36
+#else
+#define FREQ_TABLE_SIZE		35
+#endif
+
 #define SECCLKAGD		BIT(4)
 
 static DEFINE_MUTEX(driver_lock);
