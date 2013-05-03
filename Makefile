@@ -372,8 +372,10 @@ KBUILD_CFLAGS   := -Wall -Wundef -Wstrict-prototypes -Wno-trigraphs \
 		   -fno-strict-aliasing -fno-common \
 		   -Werror-implicit-function-declaration \
 		   -Wno-format-security \
-                   -mtune=cortex-a15 \
-		   -fno-delete-null-pointer-checks
+                   -mcpu=cortex-a15 -mtune=cortex-a15 \
+		   -fno-delete-null-pointer-checks \
+                   -fmodulo-sched -fmodulo-sched-allow-regmoves \
+		   -fno-tree-vectorize -pipe
 KBUILD_AFLAGS_KERNEL :=
 KBUILD_CFLAGS_KERNEL :=
 KBUILD_AFLAGS   := -D__ASSEMBLY__
@@ -565,6 +567,10 @@ all: vmlinux
 
 ifdef CONFIG_CC_OPTIMIZE_FOR_SIZE
 KBUILD_CFLAGS	+= -Os
+else ifdef CONFIG_CC_OPTIMIZE_FOR_PERF
+KBUILD_CFLAGS   += -O3 -fmodulo-sched -fmodulo-sched-allow-regmoves -fno-tree-vectorize
+else ifdef CONFIG_CC_OPTIMIZE_FOR_SPEED
+KBUILD_CFLAGS   += -Ofast
 else
 KBUILD_CFLAGS	+= -O2
 endif
