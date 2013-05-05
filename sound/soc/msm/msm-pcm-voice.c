@@ -547,11 +547,13 @@ static struct snd_kcontrol_new msm_voice_controls[] = {
 	SOC_SINGLE_EXT("Voice Tx Mute", SND_SOC_NOPM, 0, 1, 0,
 				msm_voice_mute_get, msm_voice_mute_put),
 #ifdef CONFIG_VZW_VOLUME
+#if defined(CONFIG_MACH_M2_VZW)
 	SOC_SINGLE_EXT("Voice Rx Volume", SND_SOC_NOPM, 0, 7, 0,
 				msm_voice_volume_get, msm_voice_volume_put),
 #else
 	SOC_SINGLE_EXT("Voice Rx Volume", SND_SOC_NOPM, 0, 5, 0,
 				msm_voice_volume_get, msm_voice_volume_put),
+#endif
 #endif
 	SOC_ENUM_EXT("TTY Mode", msm_tty_mode_enum[0], msm_voice_tty_mode_get,
 				msm_voice_tty_mode_put),
